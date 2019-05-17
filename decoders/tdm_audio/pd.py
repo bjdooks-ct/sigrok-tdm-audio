@@ -19,28 +19,43 @@
 
 import sigrokdecode as srd
 
+_max_channels = 8
+
 class Decoder(srd.Decoder):
     api_version = 3
-    id = 'TDM'
+    id = 'tdm'
     name = 'TDM'
     longname = 'TDM Audio'
     desc = 'TDM multi-channel audio'
     license = 'gplv2+'
     inputs = ['logic']
-    outputs = ['tdm']
+    outputs = []
+    tags = ['Audio']
     channels = (
         { 'id': 'clock', 'name': 'bitclk', 'desc': 'Data bit clock' },
         { 'id': 'frame', 'name': 'framesync', 'desc': 'Frame sync' },
         { 'id': 'data', 'name': 'data', 'desc': 'Serial data' },
-     )
+    )
     optional_channels = ()
     options = (
         {'id': 'bps', 'desc': 'Bits per sample', 'default':16 },
         {'id': 'channels', 'desc': 'Channels per frame', 'default':8 },
         {'id': 'edge', 'desc': 'Clock edge to sample on', 'default':'r', 'values': ('r', 'f') }
     )
+    annotations = tuple(
+        ('ch{}'.format(i), 'Channel {}'.format(i)) for i in range(_max_channels)
+    ) + (
+        ('warning', 'Warning'),
+    )
+    annotation_rows = (
+        ('data', 'Data', tuple(range(_max_channels))),
+        ('warnings', 'Warnings', (_max_channels,)),
+    )
 
     def __init__(self, **kwargs):
+        self.reset()
+
+    def reset(self):
         # initialsation here
         self.samplerate = None
         self.channels = 8
@@ -52,7 +67,6 @@ class Decoder(srd.Decoder):
         self.lastframe = 0
         self.data = 0
         self.ss_block = None
-        self.annotations = ( ('data', 'Data'), ('warning', 'Warning') )
 
     def metdatadata(self, key, value):
         if key == srd.SRC_CONF_SAMPLERATE:
@@ -63,24 +77,10 @@ class Decoder(srd.Decoder):
         self.bitdepth = self.options['bps']
         self.edge = self.options['edge']
 
-        self.annotations = ( )
-        for ch in range (0, self.channels):
-            self.annotations += ( 'ch%d' % ch, 'Channel %d' % ch)
-
     def decode(self):
        while True:
            # wait for edge of clock (sample on rising/falling edge)
            clock, frame, data =  self.wait({0: self.edge})
-
-           # check for new frame
-           # note, frame may be a single clock, or active for the first
-           # sample in the frame
-           if frame != self.lastframe and frame == 1:
-               self.channel = 0
-               self.bitcount = 0
-               self.data = 0
-               if self.ss_block is None:
-                   self.ss_block = 0
 
            self.data = (self.data << 1) | data
            self.bitcount += 1
@@ -100,10 +100,10 @@ class Decoder(srd.Decoder):
                    else:
                        v = '%08x' % self.data
 
-                    if self.channel < self.channels:
-                        ch = self.channel
-                    else:
-                        ch = 0
+                   if self.channel < self.channels:
+                       ch = self.channel
+                   else:
+                       ch = 0
 
                    self.put(self.ss_block, self.samplenum, self.out_ann,
                             [ch, ['%s: %s' % (c1, v),
@@ -113,5 +113,14 @@ class Decoder(srd.Decoder):
                    self.ss_block = self.samplenum
                    self.samplecount += 1
 
+           # check for new frame
+           # note, frame may be a single clock, or active for the first
+           # sample in the frame
+           if frame != self.lastframe and frame == 1:
+               self.channel = 0
+               self.bitcount = 0
+               self.data = 0
+               if self.ss_block is None:
+                   self.ss_block = 0
 
            self.lastframe = frame
